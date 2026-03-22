@@ -4,6 +4,6 @@ numpy<2.0.0
 scikit-learn
 lightgbm
 shap
-openai
+google-generativeai
 matplotlib
 joblib
