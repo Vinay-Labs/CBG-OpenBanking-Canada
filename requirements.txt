@@ -1,5 +1,7 @@
-pyspark
+streamlit==1.32.0
 pandas
-matplotlib
-seaborn
-streamlit
+numpy
+lightgbm
+scikit-learn
+shap
+openai
