@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # ==========================================
 # 1. PAGE CONFIG & SECRETS
 # ==========================================
-st.set_page_config(page_title="AI Underwriting Engine", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Nexus AI Underwriting", page_icon="🛡️", layout="wide")
 
 try:
     openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -17,28 +17,17 @@ except KeyError:
     openai.api_key = "YOUR_API_KEY_HERE"
 
 # ==========================================
-# 2. DATA DICTIONARY (Aligns with Notebook & SQL)
+# 2. DATA DICTIONARY (For LLM & Tooltips)
 # ==========================================
 OFFICIAL_DICTIONARY = {
-    "credit_to_income_ratio": "Credit-to-Income Ratio",
-    "annuity_to_income_ratio": "Annuity-to-Income Ratio",
-    "active_loan_ratio": "Active Loan Ratio",
-    "total_previous_loans": "Total Previous Loans",
-    "avg_credit_sum": "Avg Previous Credit Amount",
-    "bureau_debt_to_credit_ratio": "Bureau Debt-to-Credit Ratio",
-    "total_installments": "Total Installment Count",
-    "avg_delay": "Average Payment Delay (Days)",
-    "late_ratio": "Late Payment Ratio",
-    "payment_ratio": "Payment-to-Installment Ratio",
-    "EXT_SOURCE_1": "Alt Proxy 1 (Telco)",
-    "EXT_SOURCE_2": "Alt Proxy 2 (Cash Flow)",
-    "EXT_SOURCE_3": "Alt Proxy 3 (Behavioral)",
-    "EXT_SOURCE_MEAN": "Aggregated Alt Score",
-    "EXT_SOURCE_PRODUCT": "Alt Score Reliability Index",
-    "AGE": "Applicant Age",
-    "DAYS_EMPLOYED": "Employment Duration",
-    "AMT_CREDIT": "Loan Amount (Log)",
-    "AMT_INCOME_TOTAL": "Total Income"
+    "EXT_SOURCE_1": "External Source 1: Credit Bureau/Telecom Score",
+    "EXT_SOURCE_2": "External Source 2: Transactional Cash Flow Score",
+    "EXT_SOURCE_3": "External Source 3: Alternative Behavioral Score",
+    "late_ratio": "Percentage of past installments that were paid after the due date.",
+    "payment_ratio": "Calculated as (Total Paid / Total Due). Values < 1 indicate underpayment.",
+    "avg_delay": "Average days late across all installments. Positive is late, negative is early.",
+    "credit_to_income_ratio": "Proportion of requested loan amount relative to annual income.",
+    "active_loan_ratio": "Proportion of total historical loans that are currently active."
 }
 
 # ==========================================
@@ -46,15 +35,17 @@ OFFICIAL_DICTIONARY = {
 # ==========================================
 def generate_ai_feedback(probability, shap_evidence, decision):
     prompt = f"""
-    You are an expert AI Underwriting Assistant. 
-    Decision: {decision} | Default Probability: {probability:.2%}
+    You are a Senior Risk Underwriter at a global bank. 
+    Review Decision: {decision} | Model-Calculated Risk: {probability:.2%}
     
-    SHAP EVIDENCE (Math-based):
+    SHAP EXPLAINABILITY DATA:
     {shap_evidence}
     
-    TASK: Provide an INTERNAL MEMO (Technical) and an APPLICANT LETTER (Gentle/Plain English).
-    Translate technical features using the descriptions provided. 
-    A positive impact (+) increases risk; a negative impact (-) decreases risk.
+    INSTRUCTIONS:
+    1. Write an INTERNAL RISK MEMO: Use technical terms (like EXT_SOURCE_PRODUCT). Explain the logic.
+    2. Write a CLIENT DECISION LETTER: Use empathetic, professional language. 
+       - If rejected, use the data to explain the specific risk (e.g., 'recent payment delays' instead of 'late_ratio').
+       - If approved, mention their 'strong financial stability indicators'.
     """
     try:
         response = openai.chat.completions.create(
@@ -65,7 +56,7 @@ def generate_ai_feedback(probability, shap_evidence, decision):
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"AI Report Generation Error: {str(e)}"
+        return f"AI Generation Offline. Logic Summary: {decision} with {probability:.2%} risk."
 
 # ==========================================
 # 4. LOAD MODEL
@@ -77,85 +68,93 @@ def load_model():
 model = load_model()
 
 # ==========================================
-# 5. UI & RAW INPUTS (With Units)
+# 5. UI LAYOUT: NEXUS AI SUITE
 # ==========================================
-st.title("🏦 FinTech AI: Alternative Data Underwriter")
-st.markdown("Automated risk assessment for 'thin-file' applicants.")
+st.title("🛡️ Nexus AI: Cognitive Credit Underwriting Suite")
+st.markdown("#### *High-Precision Default Risk Prediction & Explainable AI (XAI)*")
+st.divider()
 
-st.sidebar.header("📝 Application Data")
+# SIDEBAR INPUTS
+st.sidebar.header("📊 Application Dossier")
 
-# Sections with Units
-st.sidebar.subheader("👤 Applicant Core")
-age = st.sidebar.number_input("Age (Years)", 18, 100, 35)
-days_emp = st.sidebar.number_input("Days Employed (Negative format)", value=-1500, help="Example: -1500 means 1500 days of history")
-income = st.sidebar.number_input("Total Annual Income ($)", value=60000.0, step=1000.0)
-credit = st.sidebar.number_input("Requested Loan Amount ($)", value=250000.0, step=5000.0)
-annuity = st.sidebar.number_input("Monthly Payment / Annuity ($)", value=12500.0, step=500.0)
+# --- SECTION 1: FINANCIALS ---
+with st.sidebar.expander("💰 Core Financials", expanded=True):
+    income = st.number_input("Annual Income ($)", value=60000.0, help="Total gross income of the applicant.")
+    credit_amt = st.number_input("Requested Loan ($)", value=250000.0, help="The total amount the client wants to borrow.")
+    annuity = st.number_input("Monthly Installment ($)", value=12500.0, help="The amount the client will pay every month.")
+    age = st.number_input("Applicant Age", 18, 90, 35, help="Standard age in years.")
 
-st.sidebar.subheader("🌐 Alternative Proxies (0.0 to 1.0)")
-e1 = st.sidebar.slider("Alt Proxy 1 (Telco)", 0.0, 1.0, 0.5)
-e2 = st.sidebar.slider("Alt Proxy 2 (Cash Flow)", 0.0, 1.0, 0.6)
-e3 = st.sidebar.slider("Alt Proxy 3 (Behavioral)", 0.0, 1.0, 0.5)
+# --- SECTION 2: EXT SOURCES ---
+with st.sidebar.expander("🌐 External Risk Scores", expanded=True):
+    ext_1 = st.slider("EXT_SOURCE_1", 0.0, 1.0, 0.5, help="Score from External Credit Bureau 1.")
+    ext_2 = st.slider("EXT_SOURCE_2", 0.0, 1.0, 0.6, help="Internal Score based on Cash Flow/Banking history.")
+    ext_3 = st.slider("EXT_SOURCE_3", 0.0, 1.0, 0.4, help="Score from Alternative Digital Behavioral Data.")
 
-st.sidebar.subheader("📊 Bureau & Installment History")
-prev_loans = st.sidebar.number_input("Total Previous Loans", 0, 50, 3)
-active_loans = st.sidebar.number_input("Active Loans", 0, 50, 1)
-b_debt_ratio = st.sidebar.slider("Bureau Debt-to-Credit Ratio (%)", 0.0, 1.0, 0.3)
-tot_inst = st.sidebar.number_input("Total Past Installments", 0, 500, 24)
-l_ratio = st.sidebar.slider("Late Payment Ratio (%)", 0.0, 1.0, 0.05)
-a_delay = st.sidebar.number_input("Avg Payment Delay (Days, + is late)", value=-2.0)
-p_ratio = st.sidebar.slider("Payment Ratio (Amt Paid / Amt Due)", 0.0, 2.0, 1.0)
-
-# ==========================================
-# 6. ENGINE: CALCULATE & PREDICT
-# ==========================================
-if st.button("🚀 Evaluate Applicant"):
+# --- SECTION 3: CALCULATION WORKSHEET FOR EMPLOYEE ---
+with st.sidebar.expander("📝 History Worksheet (Auto-Calc)", expanded=False):
+    st.caption("Enter raw history; the AI calculates the ratios below.")
+    tot_due = st.number_input("Total Amount Ever Due ($)", value=10000.0)
+    tot_paid = st.number_input("Total Amount Actually Paid ($)", value=9800.0)
     
-    # 1. SQL-Aligned Feature Engineering
-    ext_mean = (e1 + e2 + e3) / 3
-    ext_prod = e1 * e2 * e3
-    c_to_i = credit / income if income > 0 else 0
+    # Internal Calculation:
+    payment_ratio = tot_paid / tot_due if tot_due > 0 else 1.0
+    st.write(f"**Calculated Payment Ratio:** {payment_ratio:.2f}")
+
+    late_count = st.number_input("Number of Late Payments", 0, 500, 2)
+    total_inst = st.number_input("Total Installment Count", 1, 500, 24)
+    
+    # Internal Calculation:
+    late_ratio = late_count / total_inst
+    st.write(f"**Calculated Late Ratio:** {late_ratio:.2%}")
+
+    avg_delay = st.number_input("Avg Delay (Days)", value=2.0, help="Decimal allowed: e.g., 2.5 days means across all loans, the average lateness was 2.5 days.")
+
+# ==========================================
+# 6. EVALUATION ENGINE
+# ==========================================
+if st.button("🚀 EXECUTE RISK ASSESSMENT", type="primary"):
+    
+    # 1. Feature Engineering
+    ext_mean = (ext_1 + ext_2 + ext_3) / 3
+    ext_prod = ext_1 * ext_2 * ext_3
+    c_to_i = credit_amt / income if income > 0 else 0
     a_to_i = annuity / income if income > 0 else 0
-    act_ratio = active_loans / prev_loans if prev_loans > 0 else 0
     
-    # Skewness Transform (Phase 4)
-    amt_credit_log = np.log1p(credit)
-
-    # 2. Map to Model Features
-    input_dict = {
-        'AGE': age, 'DAYS_EMPLOYED': days_emp, 'AMT_INCOME_TOTAL': income,
-        'AMT_CREDIT': amt_credit_log, 'AMT_ANNUITY': annuity,
-        'EXT_SOURCE_1': e1, 'EXT_SOURCE_2': e2, 'EXT_SOURCE_3': e3,
+    # 2. Alignment with Model Features
+    # This block uses a dictionary comprehension to ensure a 1-row DataFrame is built perfectly
+    raw_data = {
+        'EXT_SOURCE_1': ext_1, 'EXT_SOURCE_2': ext_2, 'EXT_SOURCE_3': ext_3,
         'EXT_SOURCE_MEAN': ext_mean, 'EXT_SOURCE_PRODUCT': ext_prod,
-        'total_previous_loans': prev_loans, 'active_loans': active_loans,
-        'bureau_debt_to_credit_ratio': b_debt_ratio,
-        'total_installments': tot_inst, 'late_ratio': l_ratio,
-        'avg_delay': a_delay, 'payment_ratio': p_ratio,
-        'credit_to_income_ratio': c_to_i, 'annuity_to_income_ratio': a_to_i,
-        'active_loan_ratio': act_ratio
+        'AGE': age, 'AMT_INCOME_TOTAL': income, 'AMT_CREDIT': np.log1p(credit_amt),
+        'AMT_ANNUITY': annuity, 'payment_ratio': payment_ratio,
+        'late_ratio': late_ratio, 'avg_delay': avg_delay,
+        'credit_to_income_ratio': c_to_i, 'annuity_to_income_ratio': a_to_i
     }
 
-    # Robust Feature Extraction (Fixed the NoneType error)
+    # FIX: Robustly get feature names and force the shape
     if hasattr(model, 'feature_names_in_'): model_features = model.feature_names_in_
-    elif hasattr(model, 'feature_name_'): model_features = model.feature_name_
-    else: model_features = model.booster_.feature_name()
+    else: model_features = model.feature_name_
 
-    # Create 1-row DataFrame horizontally
-    full_input = {feat: [input_dict.get(feat, 0.0)] for feat in model_features}
-    input_df = pd.DataFrame(full_input)
+    # Create DataFrame: Ensure it is 1 Row, N Columns
+    # Passing as [list] inside dictionary ensures horizontal orientation
+    processed_input = {feat: [raw_data.get(feat, 0.0)] for feat in model_features}
+    input_df = pd.DataFrame(processed_input)
 
-    # 3. Decision
+    # 3. Predict Decision
     prob = model.predict_proba(input_df)[0][1]
     decision = "REJECTED" if prob > 0.25 else "APPROVED"
     
-    st.subheader(f"Decision: {'❌' if decision=='REJECTED' else '✅'} {decision}")
-    st.progress(prob)
-    st.write(f"Default Risk Probability: **{prob:.2%}**")
+    # UI Display
+    res_col1, res_col2 = st.columns(2)
+    with res_col1:
+        color = "red" if decision == "REJECTED" else "green"
+        st.markdown(f"### SYSTEM VERDICT: <span style='color:{color}'>{decision}</span>", unsafe_allow_html=True)
+    with res_col2:
+        st.metric("Risk Probability", f"{prob:.2%}")
 
     # 4. SHAP Logic
     explainer = shap.TreeExplainer(model)
     shap_vals = explainer.shap_values(input_df)
-    # LightGBM logic check
     shap_vals_class1 = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
     
     top_idx = np.argsort(np.abs(shap_vals_class1))[-5:]
@@ -163,11 +162,11 @@ if st.button("🚀 Evaluate Applicant"):
     for i in top_idx:
         f_name = input_df.columns[i]
         impact = shap_vals_class1[i]
-        desc = OFFICIAL_DICTIONARY.get(f_name, "Internal Metric")
-        shap_evidence += f"- {f_name} ({desc}): {impact:+.4f} risk impact\n"
+        desc = OFFICIAL_DICTIONARY.get(f_name, "Internal Risk Proxy")
+        shap_evidence += f"- {desc} ({f_name}): {impact:+.4f}\n"
 
     # 5. LLM Report
-    with st.spinner("AI is analyzing SHAP values..."):
-        report = generate_ai_feedback(prob, shap_evidence, decision)
+    with st.spinner("GenAI Analyzing Risk Drivers..."):
+        full_report = generate_ai_feedback(prob, shap_evidence, decision)
         st.divider()
-        st.markdown(report)
+        st.markdown(full_report)
