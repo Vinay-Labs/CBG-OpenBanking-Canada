@@ -1,7 +1,9 @@
-streamlit==1.32.0
+streamlit
 pandas
-numpy
-lightgbm
+numpy<2.0.0
 scikit-learn
+lightgbm
 shap
 openai
+matplotlib
+joblib
