@@ -31,32 +31,51 @@ OFFICIAL_DICTIONARY = {
 }
 
 # ==========================================
-# 3. AI GENERATION ENGINE
+# 3. ROBUST AI GENERATION ENGINE
 # ==========================================
-def generate_ai_feedback(probability, shap_evidence, decision):
+def generate_ai_feedback(probability, shap_evidence, decision, applicant_name="Applicant"):
+    # The "Master Prompt" designed for Banking Compliance
     prompt = f"""
-    You are a Senior Risk Underwriter at a global bank. 
-    Review Decision: {decision} | Model-Calculated Risk: {probability:.2%}
+    You are a Senior Credit Risk Underwriter and Compliance Officer. 
+    A loan application has been processed by our LightGBM Gradient Boosting model.
     
-    SHAP EXPLAINABILITY DATA:
+    VERDICT: {decision}
+    DEFAULT RISK PROBABILITY: {probability:.2%}
+    
+    SHAP EXPLAINABILITY DATA (The "Why"):
     {shap_evidence}
     
     INSTRUCTIONS:
-    1. Write an INTERNAL RISK MEMO: Use technical terms (like EXT_SOURCE_PRODUCT). Explain the logic.
-    2. Write a CLIENT DECISION LETTER: Use empathetic, professional language. 
-       - If rejected, use the data to explain the specific risk (e.g., 'recent payment delays' instead of 'late_ratio').
-       - If approved, mention their 'strong financial stability indicators'.
+    Provide a response with two distinct sections using Markdown headers.
+
+    ### 🔒 INTERNAL UNDERWRITING MEMO (For Bank Staff)
+    - Explain the model's decision using technical terms (e.g., "High variance in EXT_SOURCE_3" or "Log-transformed Credit Amount").
+    - Refer specifically to the SHAP values. Explain how the combination of features pushed the probability to {probability:.2%}.
+    - Be objective and data-driven. Mention if the decision was "borderline" (near the 25% threshold).
+
+    ### ✉️ ADVERSE ACTION / APPROVAL LETTER (For {applicant_name})
+    - Use professional, empathetic banking language.
+    - DO NOT use technical terms like 'SHAP', 'EXT_SOURCE', 'Log-transform', or 'Ratio'.
+    - TRANSLATE the data: 
+        - If EXT_SOURCE_MEAN is a risk: "Alternative credit markers indicate lower financial stability."
+        - If late_ratio is a risk: "Recent history of installment delays."
+        - If debt_to_income is a risk: "High debt obligations relative to reported income."
+    - If REJECTED: Clearly state the top 2 reasons for denial as per regulatory requirements.
+    - If APPROVED: Welcome them and mention the strengths of their application.
     """
+
     try:
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are a professional bank underwriter."},
-                      {"role": "user", "content": prompt}],
-            temperature=0.1
+            messages=[
+                {"role": "system", "content": "You are a professional bank underwriter. You translate machine learning SHAP values into clear business logic."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2 # Low temperature for consistency and accuracy
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"AI Generation Offline. Logic Summary: {decision} with {probability:.2%} risk."
+        return f"⚠️ LLM Bridge Error: {str(e)}\n\n**Manual Fallback Summary:** The model {decision} the application with a risk score of {probability:.2%} based on the provided financial metrics."
 
 # ==========================================
 # 4. LOAD MODEL
@@ -110,18 +129,17 @@ with st.sidebar.expander("📝 History Worksheet (Auto-Calc)", expanded=False):
     avg_delay = st.number_input("Avg Delay (Days)", value=2.0, help="Decimal allowed: e.g., 2.5 days means across all loans, the average lateness was 2.5 days.")
 
 # ==========================================
-# 6. EVALUATION ENGINE
+# 6. NEXUS AI EVALUATION ENGINE (FINAL VERSION)
 # ==========================================
 if st.button("🚀 EXECUTE RISK ASSESSMENT", type="primary"):
     
-    # 1. Feature Engineering
+    # 1. Background Feature Engineering (Automating the SQL/Phase 3 logic)
     ext_mean = (ext_1 + ext_2 + ext_3) / 3
     ext_prod = ext_1 * ext_2 * ext_3
     c_to_i = credit_amt / income if income > 0 else 0
     a_to_i = annuity / income if income > 0 else 0
     
-    # 2. Alignment with Model Features
-    # This block uses a dictionary comprehension to ensure a 1-row DataFrame is built perfectly
+    # Map all inputs to the model's required format
     raw_data = {
         'EXT_SOURCE_1': ext_1, 'EXT_SOURCE_2': ext_2, 'EXT_SOURCE_3': ext_3,
         'EXT_SOURCE_MEAN': ext_mean, 'EXT_SOURCE_PRODUCT': ext_prod,
@@ -131,42 +149,58 @@ if st.button("🚀 EXECUTE RISK ASSESSMENT", type="primary"):
         'credit_to_income_ratio': c_to_i, 'annuity_to_income_ratio': a_to_i
     }
 
-    # FIX: Robustly get feature names and force the shape
-    if hasattr(model, 'feature_names_in_'): model_features = model.feature_names_in_
-    else: model_features = model.feature_name_
+    # Robust Feature Alignment (Checks all possible model attribute names)
+    if hasattr(model, 'feature_names_in_'): 
+        model_features = model.feature_names_in_
+    elif hasattr(model, 'feature_name_'):
+        model_features = model.feature_name_
+    else:
+        model_features = model.booster_.feature_name()
 
-    # Create DataFrame: Ensure it is 1 Row, N Columns
-    # Passing as [list] inside dictionary ensures horizontal orientation
+    # Create 1-row DataFrame horizontally (The fix for the Shape Error)
     processed_input = {feat: [raw_data.get(feat, 0.0)] for feat in model_features}
     input_df = pd.DataFrame(processed_input)
 
-    # 3. Predict Decision
+    # 2. Model Prediction
     prob = model.predict_proba(input_df)[0][1]
+    # Business threshold of 25% (Adjust this if your notebook uses a different one)
     decision = "REJECTED" if prob > 0.25 else "APPROVED"
     
-    # UI Display
+    # UI Results Display
+    st.divider()
     res_col1, res_col2 = st.columns(2)
     with res_col1:
-        color = "red" if decision == "REJECTED" else "green"
+        color = "#ff4b4b" if decision == "REJECTED" else "#28a745"
         st.markdown(f"### SYSTEM VERDICT: <span style='color:{color}'>{decision}</span>", unsafe_allow_html=True)
     with res_col2:
         st.metric("Risk Probability", f"{prob:.2%}")
 
-    # 4. SHAP Logic
-    explainer = shap.TreeExplainer(model)
-    shap_vals = explainer.shap_values(input_df)
-    shap_vals_class1 = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
-    
-    top_idx = np.argsort(np.abs(shap_vals_class1))[-5:]
-    shap_evidence = ""
-    for i in top_idx:
-        f_name = input_df.columns[i]
-        impact = shap_vals_class1[i]
-        desc = OFFICIAL_DICTIONARY.get(f_name, "Internal Risk Proxy")
-        shap_evidence += f"- {desc} ({f_name}): {impact:+.4f}\n"
+    # 3. SHAP Explainability Logic (The "Why")
+    with st.spinner("🤖 Nexus AI is analyzing risk drivers..."):
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(input_df)
+        
+        # Handle LightGBM/SHAP version differences for Class 1 (Default)
+        if isinstance(shap_values, list):
+            individual_shap = shap_values[1][0] 
+        else:
+            individual_shap = shap_values[0]
 
-    # 5. LLM Report
-    with st.spinner("GenAI Analyzing Risk Drivers..."):
-        full_report = generate_ai_feedback(prob, shap_evidence, decision)
-        st.divider()
-        st.markdown(full_report)
+        # Get top 5 features by absolute impact
+        top_indices = np.argsort(np.abs(individual_shap))[-5:][::-1]
+        
+        shap_evidence = ""
+        for i in top_indices:
+            f_name = input_df.columns[i]
+            val_impact = individual_shap[i]
+            direction = "INCREASED RISK" if val_impact > 0 else "DECREASED RISK"
+            friendly_name = OFFICIAL_DICTIONARY.get(f_name, f_name)
+            
+            # This string is what the LLM reads to understand the math
+            shap_evidence += f"- {friendly_name} ({f_name}): {val_impact:+.4f} ({direction})\n"
+
+    # 4. Generative AI Report (Final Presentation Piece)
+    with st.spinner("📝 Generating Underwriting Reports..."):
+        # This function must be defined at the top of your app.py
+        ai_report = generate_ai_feedback(prob, shap_evidence, decision)
+        st.markdown(ai_report)
