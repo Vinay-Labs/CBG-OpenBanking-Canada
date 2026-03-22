@@ -179,8 +179,9 @@ if st.button("🚀 Run AI Underwriting Engine", type="primary"):
     }
     
     # Safely pad missing columns with 0.0 based on what LightGBM expects
-    full_input = {feat: input_dict.get(feat, 0.0) for feat in model.feature_name_}
-    input_df = pd.DataFrame([full_input])
+    # Wrapping the value in a list [ ] forces Pandas to create exactly 1 row horizontally
+    full_input = {feat: [input_dict.get(feat, 0.0)] for feat in model.feature_name_}
+    input_df = pd.DataFrame(full_input)
 
     # C. PREDICT
     prob = model.predict_proba(input_df)[0][1]
